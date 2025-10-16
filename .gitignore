@@ -1,0 +1,61 @@
+.env
+.vscode
+__pycache__
+chrome_profile
+# Entorno/IDE
+.venv/
+venv/
+ENV/
+env/
+.vscode/
+.idea/
+*.code-workspace
+
+# Python cache/build
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.dll
+*.dylib
+build/
+dist/
+*.egg-info/
+.eggs/
+.mypy_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Config y secretos
+.env
+.env.*.local
+*.env
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# Selenium / perfiles locales
+chrome_profile/
+app/core/external/bot_selenium_files_solman/chrome_profile/
+app/core/external/bot_selenium_files_solman/__pycache__/
+app/core/external/bot_selenium_files_solman/*.log
+
+# Datos generados y grandes
+data_store/
+
+
+# Chroma / embeddings
+**/chroma.sqlite3
+**/*.bin
+
+# DuckDB
+**/*.duckdb
+
+# Logs generales
+*.log
+logs/
+data_store/logs/
+data_store/logs_vectorization/
