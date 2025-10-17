@@ -1,13 +1,6 @@
-<<<<<<< HEAD
-# app/agents/report/agent.py (REEMPLAZAR COMPLETO)
-
-from typing import Dict, Any
-from datetime import datetime
-=======
 from typing import Dict, Any, List
 from datetime import datetime
 import re
->>>>>>> 407859c2224dea0a0b7e7954953fa17accdb3491
 
 from app.agents.core import BaseAgent, AgentMessage
 from app.tools.core import ToolRegistry
@@ -16,18 +9,7 @@ from .config import REPORT_AGENT_INSTRUCTIONS, RESPONSE_FORMAT_INSTRUCTIONS
 class ReportAgent(BaseAgent):
     """
     Agente especializado en generación de reportes.
-<<<<<<< HEAD
-    
-    **REFACTORIZADO**: Ya no contiene lógica de preparación de datos.
-    Las Tools son completamente autónomas y resuelven sus propias dependencias.
-    
-    El rol del Agent se reduce a:
-    1. Razonamiento estratégico (decidir qué hacer)
-    2. Orquestación del flujo
-    3. Compilación del reporte final
-=======
     Usa razonamiento adaptativo LLM (NO secuencia hardcodeada).
->>>>>>> 407859c2224dea0a0b7e7954953fa17accdb3491
     """
     
     def __init__(self):
@@ -51,24 +33,13 @@ class ReportAgent(BaseAgent):
         
         self.agent_instructions = REPORT_AGENT_INSTRUCTIONS
     
-<<<<<<< HEAD
-    # NO MORE _execute_tool override!
-    # NO MORE _enrich_tool_args_smart!
-    # Las Tools son autónomas ahora.
-    
-=======
->>>>>>> 407859c2224dea0a0b7e7954953fa17accdb3491
     async def process_task(self, task: str, context: Dict[str, Any]) -> AgentMessage:
         """
         Genera reporte completo para un consultor.
         
-<<<<<<< HEAD
-        SIMPLIFICADO: Solo valida contexto y delega a run().
-=======
         Context debe contener:
             - consultant_name: str
             - report_type: str (opcional)
->>>>>>> 407859c2224dea0a0b7e7954953fa17accdb3491
         """
         consultant_name = context.get("consultant_name")
         report_type = context.get("report_type", "preview")
@@ -108,12 +79,6 @@ class ReportAgent(BaseAgent):
         if not result.success:
             return self._error_report(consultant_name, result.content)
         
-<<<<<<< HEAD
-        # Compile from ToolContext
-        final_context = result.metadata.get("context", context)
-        return self._compile_report(consultant_name, report_type, final_context)
-    
-=======
         final_context = result.metadata.get("context", context)
         return self._compile_report(consultant_name, report_type, final_context)
     
@@ -250,23 +215,13 @@ class ReportAgent(BaseAgent):
             return str(data)[:max_len]
     
     
->>>>>>> 407859c2224dea0a0b7e7954953fa17accdb3491
     def _compile_report(
         self,
         consultant_name: str,
         report_type: str,
         context: Dict[str, Any]
     ) -> Dict[str, Any]:
-<<<<<<< HEAD
-        """
-        Compila reporte desde historial.
-        
-        NOTA: Esta lógica podría también moverse a una Tool dedicada
-        "report_compilation" si queremos máxima modularidad.
-        """
-=======
         """Compila reporte desde historial"""
->>>>>>> 407859c2224dea0a0b7e7954953fa17accdb3491
         tool_history = context.get("tool_history", [])
         
         sql_data = []
@@ -305,11 +260,7 @@ class ReportAgent(BaseAgent):
                 charts = data or {}
                 self.logger.log_info(f"✓ Charts compilados: {len(charts)} gráficos")
         
-<<<<<<< HEAD
-        return {
-=======
         report = {
->>>>>>> 407859c2224dea0a0b7e7954953fa17accdb3491
             "consultant": consultant_name,
             "generated_at": datetime.now().isoformat(),
             "type": report_type,
@@ -323,13 +274,6 @@ class ReportAgent(BaseAgent):
             },
             "charts": charts,
             "metadata": {
-<<<<<<< HEAD
-                "version": "3.0-autonomous-tools",
-                "agent": self.name,
-                "architecture": "dependency-injection"
-            }
-        }
-=======
                 "version": "2.0-adaptive-llm",
                 "agent": self.name
             }
@@ -342,7 +286,6 @@ class ReportAgent(BaseAgent):
         })
         
         return report
->>>>>>> 407859c2224dea0a0b7e7954953fa17accdb3491
     
     def _error_report(self, consultant_name: str, error: str) -> Dict[str, Any]:
         """Reporte de error"""
@@ -356,13 +299,6 @@ class ReportAgent(BaseAgent):
                 "recommendations": "No disponible"
             },
             "charts": {},
-<<<<<<< HEAD
-            "metadata": {
-                "version": "3.0-autonomous-tools",
-                "error": error
-            }
-        }
-=======
             "metadata": {"version": "2.0-adaptive-llm", "error": error}
         }
     
@@ -403,4 +339,3 @@ class ReportAgent(BaseAgent):
                     terms.add(categoria)
         
         return " ".join(terms)
->>>>>>> 407859c2224dea0a0b7e7954953fa17accdb3491

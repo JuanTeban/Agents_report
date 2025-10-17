@@ -17,15 +17,11 @@ def get_llm_provider() -> LLMProvider:
     elif provider_name == "ollama":
         from .ollama_provider import OllamaLLMProvider
         return OllamaLLMProvider(model_name=LLM_MODEL_NAME)
-<<<<<<< HEAD
 
     elif provider_name == "ibm":
         from .ibm_provider import IBMWatsonProvider
         return IBMWatsonProvider(model_name=LLM_MODEL_NAME)
         
-=======
-    
->>>>>>> 407859c2224dea0a0b7e7954953fa17accdb3491
     else:
         error_msg = f"Proveedor LLM desconocido: '{provider_name}'"
         logger.error(error_msg)

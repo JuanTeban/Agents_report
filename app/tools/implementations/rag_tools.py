@@ -1,27 +1,11 @@
-<<<<<<< HEAD
-# app/tools/implementations/rag_tools.py (REEMPLAZAR COMPLETO)
-
-import re
-from pydantic import Field
-from typing import List, Dict, Any
-
-from app.tools.core import BaseTool, ToolInput, ToolOutput, register_tool, ToolContext
-=======
 from pydantic import Field
 from typing import List, Dict, Any
 
 from app.tools.core import BaseTool, ToolInput, ToolOutput, register_tool
->>>>>>> 407859c2224dea0a0b7e7954953fa17accdb3491
 from app.core.report.retrieval import ReportGeneratorRetriever
 
 @register_tool
 class EvidenceRetrievalTool(BaseTool):
-<<<<<<< HEAD
-    """Recupera evidencia estructurada de defectos."""
-    
-    class Input(ToolInput):
-        # Explícito
-=======
     """
     Recupera evidencia estructurada de defectos.
     Reutiliza RAGRetriever.get_defect_evidence_structured()
@@ -32,47 +16,10 @@ class EvidenceRetrievalTool(BaseTool):
             ...,
             description="Lista de IDs de defectos (ej: ['8000002015', '8000001916'])"
         )
->>>>>>> 407859c2224dea0a0b7e7954953fa17accdb3491
         consultant_name: str = Field(
             ...,
             description="Nombre del consultor responsable"
         )
-<<<<<<< HEAD
-        # Auto-resuelto
-        defect_ids: List[str] = Field(
-            default_factory=list,
-            description="IDs de defectos - se extrae automáticamente de SQL"
-        )
-    
-    @property
-    def dependencies(self) -> List[str]:
-        return ["sql_data_extraction"]
-    
-    def resolve_dependencies(self, context: ToolContext) -> Dict[str, Any]:
-        """Extrae defect_ids desde SQL result"""
-        resolved = {}
-        
-        sql_result = context.get_successful_result("sql_data_extraction")
-        if sql_result and sql_result.data:
-            resolved["defect_ids"] = self._extract_defect_ids(sql_result.data)
-        else:
-            resolved["defect_ids"] = []
-        
-        return resolved
-    
-    def _extract_defect_ids(self, sql_data: List[Dict]) -> List[str]:
-        """Extrae IDs de defectos de TODAS las filas"""
-        ids = set()
-        for row in sql_data:
-            defect_col = row.get("defectos", "")
-            defect_str = str(defect_col)
-            match = re.search(r'\b(\d{6,})\b', defect_str)
-            if match:
-                ids.add(match.group(1))
-        return list(ids)
-    
-    async def _execute_impl(
-=======
     
     @property
     def name(self) -> str:
@@ -93,14 +40,10 @@ class EvidenceRetrievalTool(BaseTool):
         self.retriever = ReportGeneratorRetriever()
     
     async def execute(
->>>>>>> 407859c2224dea0a0b7e7954953fa17accdb3491
         self,
         defect_ids: List[str],
         consultant_name: str
     ) -> ToolOutput:
-<<<<<<< HEAD
-        """Lógica de recuperación de evidencia"""
-=======
         """
         Recupera evidencia estructurada por secciones.
         
@@ -114,33 +57,22 @@ class EvidenceRetrievalTool(BaseTool):
                 }
             }
         """
->>>>>>> 407859c2224dea0a0b7e7954953fa17accdb3491
         try:
             if not defect_ids:
                 return ToolOutput(
                     success=False,
-<<<<<<< HEAD
-                    error="No defect_ids disponibles"
-                )
-            
-=======
                     data=None,
                     error="Lista de defect_ids vacía"
                 )
             
             # Recuperar evidencia estructurada
->>>>>>> 407859c2224dea0a0b7e7954953fa17accdb3491
             evidence = await self.retriever.get_defect_evidence_structured(
                 defect_ids=defect_ids,
                 responsable=consultant_name,
                 chunks_per_defect=20
             )
             
-<<<<<<< HEAD
-            # Calculate stats
-=======
             # Calcular estadísticas
->>>>>>> 407859c2224dea0a0b7e7954953fa17accdb3491
             total_chunks = 0
             stats_by_defect = {}
             
@@ -167,9 +99,6 @@ class EvidenceRetrievalTool(BaseTool):
         except Exception as e:
             return ToolOutput(
                 success=False,
-<<<<<<< HEAD
-=======
                 data=None,
->>>>>>> 407859c2224dea0a0b7e7954953fa17accdb3491
                 error=f"Error recuperando evidencia: {str(e)}"
             )

@@ -1,7 +1,4 @@
-<<<<<<< HEAD
-=======
 # app/config/settings_agents.py
->>>>>>> 407859c2224dea0a0b7e7954953fa17accdb3491
 """
 Configuración base para todos los agentes.
 Solo contiene instrucciones generales que aplican a todos los agentes.
