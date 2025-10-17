@@ -1,14 +1,22 @@
+<<<<<<< HEAD
 # app/tools/implementations/chart_tools.py (REEMPLAZAR COMPLETO)
 
+=======
+>>>>>>> 407859c2224dea0a0b7e7954953fa17accdb3491
 import pandas as pd
 from pydantic import Field
 from typing import List, Dict, Any
 
+<<<<<<< HEAD
 from app.tools.core import BaseTool, ToolInput, ToolOutput, register_tool, ToolContext
+=======
+from app.tools.core import BaseTool, ToolInput, ToolOutput, register_tool
+>>>>>>> 407859c2224dea0a0b7e7954953fa17accdb3491
 from app.core.report.charts import ChartBuilder
 
 @register_tool
 class ChartGenerationTool(BaseTool):
+<<<<<<< HEAD
     """Genera gráficos a partir de datos SQL."""
     
     class Input(ToolInput):
@@ -35,6 +43,32 @@ class ChartGenerationTool(BaseTool):
         return resolved
     
     async def _execute_impl(self, sql_data: List[Dict]) -> ToolOutput:
+=======
+    """
+    Genera gráficos a partir de datos SQL.
+    Reutiliza ChartBuilder existente.
+    """
+    
+    class Input(ToolInput):
+        sql_data: List[Dict] = Field(..., description="Datos SQL para visualizar")
+    
+    @property
+    def name(self) -> str:
+        return "chart_generation"
+    
+    @property
+    def description(self) -> str:
+        return "Genera gráficos (pie, bar) basados en los datos SQL del reporte"
+    
+    @property
+    def input_schema(self) -> type[ToolInput]:
+        return self.Input
+    
+    def __init__(self):
+        self.chart_builder = ChartBuilder()
+    
+    async def execute(self, sql_data: List[Dict]) -> ToolOutput:
+>>>>>>> 407859c2224dea0a0b7e7954953fa17accdb3491
         try:
             if not sql_data:
                 return ToolOutput(
@@ -74,4 +108,8 @@ class ChartGenerationTool(BaseTool):
                 success=False,
                 data={},
                 error=f"Error generando gráficos: {str(e)}"
+<<<<<<< HEAD
             )
+=======
+            )
+>>>>>>> 407859c2224dea0a0b7e7954953fa17accdb3491

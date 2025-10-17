@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # app/tools/core/base_tool.py (REEMPLAZAR COMPLETO)
 
 from abc import ABC, abstractmethod
@@ -9,6 +10,12 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .tool_context import ToolContext
 
+=======
+from abc import ABC, abstractmethod
+from typing import Any, Dict, Optional
+from pydantic import BaseModel, Field
+
+>>>>>>> 407859c2224dea0a0b7e7954953fa17accdb3491
 class ToolInput(BaseModel):
     """Schema base de entrada para tools"""
     pass
@@ -27,8 +34,16 @@ class BaseTool(ABC):
     """
     Clase base abstracta para todas las tools del sistema.
     
+<<<<<<< HEAD
     **Patrón de Dependency Injection:**
     Las tools modernas son autónomas y resuelven sus propias dependencias.
+=======
+    Cada tool debe:
+    - Definir un nombre único
+    - Proveer descripción clara
+    - Especificar schema de entrada (Pydantic)
+    - Implementar método execute async
+>>>>>>> 407859c2224dea0a0b7e7954953fa17accdb3491
     """
     
     @property
@@ -49,6 +64,7 @@ class BaseTool(ABC):
         """Schema Pydantic de entrada"""
         pass
     
+<<<<<<< HEAD
     @property
     def dependencies(self) -> List[str]:
         """
@@ -161,3 +177,49 @@ class BaseTool(ABC):
             "parameters": self.input_schema.model_json_schema(),
             "dependencies": self.dependencies
         }
+=======
+    @abstractmethod
+    async def execute(self, **kwargs) -> ToolOutput:
+        """
+        Ejecuta la tool con los parámetros validados.
+        
+        Los kwargs serán validados automáticamente contra input_schema
+        antes de llegar aquí.
+        """
+        pass
+    
+    def to_llm_schema(self) -> Dict[str, Any]:
+        """
+        Genera schema JSON compatible con LLM function calling.
+        
+        Returns:
+            {
+                "name": "tool_name",
+                "description": "...",
+                "parameters": {...}  # JSON Schema
+            }
+        """
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": self.input_schema.model_json_schema()
+        }
+    
+    def validate_and_execute(self, **kwargs) -> ToolOutput:
+        """
+        Valida entrada y ejecuta (wrapper para validación).
+        En v2 esto será async, por ahora wrapper sync.
+        """
+        try:
+            # Validar con Pydantic
+            validated = self.input_schema(**kwargs)
+            # Ejecutar (nota: en producción esto debe ser await)
+            import asyncio
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # Si ya hay loop, retornar future
+                raise RuntimeError("Use execute() directamente en contexto async")
+            return loop.run_until_complete(self.execute(**validated.model_dump()))
+        except Exception as e:
+            return ToolOutput(success=False, error=str(e))
+>>>>>>> 407859c2224dea0a0b7e7954953fa17accdb3491

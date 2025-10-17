@@ -13,6 +13,7 @@ VISION_PROVIDER = os.getenv("VISION_PROVIDER", "ollama")
 VISION_MODEL_NAME = os.getenv("VISION_MODEL_NAME", "gemma3:4b")
 #--------------------------------------------------
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+<<<<<<< HEAD
 IBM_API_URL = os.getenv(
     "IBM_API_URL", 
     "https://us-south.ml.cloud.ibm.com/ml/v1/text/chat?version=2023-05-29"
@@ -23,6 +24,12 @@ LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "meta-llama/llama-3-3-70b-instruct"
 CEREBRAS_API_KEY = os.getenv("CEREBRAS_API_KEY", "")
 IBM_API_KEY = os.getenv("IBM_API_KEY", "")
 IBM_PROJECT_ID = os.getenv("IBM_PROJECT_ID", "")
+=======
+#--------------------------------------------------
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "cerebras")
+LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "llama-3.3-70b")
+CEREBRAS_API_KEY = os.getenv("CEREBRAS_API_KEY", "")
+>>>>>>> 407859c2224dea0a0b7e7954953fa17accdb3491
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 #--------------------------------------------------
 REPORT_MAX_EVIDENCE = int(os.getenv("REPORT_MAX_EVIDENCE", "50"))

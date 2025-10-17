@@ -1,11 +1,9 @@
-# app/agents/core/base_agent.py (REEMPLAZAR COMPLETO)
-
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
 import logging
 
 from app.utils.logger import get_flow_logger
-from app.tools.core import BaseTool, ToolOutput, ToolContext
+from app.tools.core import BaseTool, ToolOutput
 from .agent_message import AgentMessage
 
 from app.config.settings_agents import BASE_AGENT_INSTRUCTIONS
@@ -19,7 +17,6 @@ class BaseAgent(ABC):
     - Tool calling con validación
     - Logging detallado
     - Memoria de conversación
-    - ToolContext para autonomía de tools
     """
     
     def __init__(
@@ -44,9 +41,8 @@ class BaseAgent(ABC):
         )
         
         self.memory: List[AgentMessage] = []
-        
-        # ToolContext instance for current run
-        self._tool_context: Optional[ToolContext] = None
+
+        self._current_run_context: Dict[str, Any] = {}
         
         self.logger.log_info(
             f"Agent '{name}' initialized",
@@ -85,8 +81,7 @@ class BaseAgent(ABC):
         context = context or {}
         iteration = 0
         
-        # Initialize ToolContext for this run
-        self._tool_context = ToolContext()
+        self._current_run_context = context
         
         try:
             async with self.logger.step(
@@ -112,12 +107,13 @@ class BaseAgent(ABC):
                             metadata={
                                 "iterations": iteration,
                                 "context": context,
-                                "tool_context": self._tool_context.to_dict(),
                                 "reasoning": thought.get("reasoning", "")
                             },
                             success=True
                         )
                         self.memory.append(result)
+                        
+                        self._current_run_context = {}
                         
                         self.logger.end_flow(success=True)
                         return result
@@ -140,6 +136,8 @@ class BaseAgent(ABC):
                             "args": tool_args,
                             "result": observation.model_dump()
                         })
+                        
+                        self._current_run_context = context
                 
                 self.logger.log_warning(f"Max iterations ({self.max_iterations}) reached")
                 error_result = AgentMessage(
@@ -153,6 +151,8 @@ class BaseAgent(ABC):
                     success=False
                 )
                 
+                self._current_run_context = {}
+                
                 self.logger.end_flow(success=False, error="Max iterations")
                 return error_result
                 
@@ -165,15 +165,23 @@ class BaseAgent(ABC):
                 success=False
             )
             
+            self._current_run_context = {}
+            
             self.logger.end_flow(success=False, error=str(e))
             return error_result
-        finally:
-            # Clean up
-            self._tool_context = None
     
     async def _think(self, task: str, context: Dict) -> Dict[str, Any]:
         """
         Razonamiento adaptativo: LLM decide basándose en instrucciones detalladas.
+        
+        Returns:
+            {
+                "reasoning": "...",
+                "action": "use_tool" | "final_answer",
+                "tool_name": "...",
+                "tool_args": {...},
+                "answer": "..."
+            }
         """
         full_prompt = self._build_full_prompt(task, context)
         
@@ -202,39 +210,43 @@ class BaseAgent(ABC):
         """Construye prompt COMPLETO y DETALLADO para el LLM"""
         
         agent_instructions = getattr(self, 'agent_instructions', '')
+        
         tools_catalog = self._get_tools_catalog()
+        
         tool_history = context.get("tool_history", [])
         history_text = self._format_history_for_llm(tool_history)
+        
         last_obs = context.get("last_observation")
         observation_text = self._format_last_observation(last_obs)
+        
         analysis_guide = self._get_analysis_guide(tool_history, task)
         
         return f"""
-{BASE_AGENT_INSTRUCTIONS}
+                {BASE_AGENT_INSTRUCTIONS}
 
-{agent_instructions}
+                {agent_instructions}
 
-## TOOLS DISPONIBLES:
-{tools_catalog}
+                ## TOOLS DISPONIBLES:
+                {tools_catalog}
 
-## TU TAREA ACTUAL:
-{task}
+                ## TU TAREA ACTUAL:
+                {task}
 
-## CONTEXTO:
-- Consultor: {context.get('consultant_name', 'N/A')}
-- Tipo: {context.get('report_type', 'N/A')}
+                ## CONTEXTO:
+                - Consultor: {context.get('consultant_name', 'N/A')}
+                - Tipo: {context.get('report_type', 'N/A')}
 
-## HISTORIAL DE TOOLS EJECUTADAS:
-{history_text}
+                ## HISTORIAL DE TOOLS EJECUTADAS:
+                {history_text}
 
-## ÚLTIMA OBSERVACIÓN:
-{observation_text}
+                ## ÚLTIMA OBSERVACIÓN:
+                {observation_text}
 
-{analysis_guide}
-   
-## FORMATO DE RESPUESTA:  
-{self.response_format_instructions}
-"""
+                {analysis_guide}
+                   
+                ## FORMATO DE RESPUESTA:  
+                {self.response_format_instructions}
+                """
 
     def _get_tools_catalog(self) -> str:
         """Genera catálogo detallado de tools para el prompt"""
@@ -265,7 +277,10 @@ class BaseAgent(ABC):
         return "\n\n".join(catalog)
 
     def _format_history_for_llm(self, tool_history: List[Dict]) -> str:
-        """Formatea historial para el LLM"""
+        """
+        Formatea historial de forma INTELIGENTE para el LLM.
+        No truncar datos importantes como listas de resultados.
+        """
         if not tool_history:
             return "Sin historial (es la primera iteración)"
         
@@ -285,42 +300,55 @@ class BaseAgent(ABC):
                     row_count = metadata.get("row_count", len(data) if isinstance(data, list) else 0)
                     formatted.append(
                         f"{i}. {status} - Tool: {tool_name}\n"
-                        f"   RESULTADOS: {row_count} filas extraídas"
+                        f"   Args: {args}\n"
+                        f"   RESULTADOS: {row_count} filas extraídas\n"
+                        f"   SQL ejecutado: {metadata.get('sql_executed', 'N/A')[:100]}...\n"
+                        f"   IMPORTANTE: Hay {row_count} defectos en total"
                     )
                 elif tool_name == "evidence_retrieval":
                     total_chunks = metadata.get("total_chunks", 0)
                     formatted.append(
                         f"{i}. {status} - Tool: {tool_name}\n"
-                        f"   RESULTADOS: {total_chunks} chunks de evidencia"
+                        f"   Args: {args}\n"
+                        f"   RESULTADOS: {total_chunks} chunks de evidencia\n"
+                        f"   Stats: {metadata.get('stats_by_defect', {})}"
                     )
                 elif tool_name == "business_rules":
                     count = metadata.get("count", len(data) if isinstance(data, list) else 0)
                     formatted.append(
                         f"{i}. {status} - Tool: {tool_name}\n"
+                        f"   Args: {args}\n"
                         f"   RESULTADOS: {count} reglas recuperadas"
                     )
                 elif tool_name in ["summary_generation", "recommendations_generation"]:
                     text_len = len(data) if isinstance(data, str) else 0
                     formatted.append(
                         f"{i}. {status} - Tool: {tool_name}\n"
-                        f"   RESULTADOS: Texto generado ({text_len} caracteres)"
+                        f"   Args: consultor={args.get('consultant_name', 'N/A')}\n"
+                        f"   RESULTADOS: Texto generado ({text_len} caracteres)\n"
+                        f"   Preview: {data[:150] if isinstance(data, str) else 'N/A'}..."
                     )
                 elif tool_name == "chart_generation":
                     chart_count = metadata.get("total_charts", 0)
+                    chart_names = metadata.get("chart_names", [])
                     formatted.append(
                         f"{i}. {status} - Tool: {tool_name}\n"
-                        f"   RESULTADOS: {chart_count} gráficos generados"
+                        f"   RESULTADOS: {chart_count} gráficos generados\n"
+                        f"   Nombres: {chart_names}"
                     )
                 else:
                     data_str = str(data)[:200] if data else "Sin datos"
                     formatted.append(
                         f"{i}. {status} - Tool: {tool_name}\n"
-                        f"   Data: {data_str}..."
+                        f"   Args: {args}\n"
+                        f"   Data: {data_str}...\n"
+                        f"   Metadata: {metadata}"
                     )
             else:
                 error = result.get("error", "Error desconocido")
                 formatted.append(
                     f"{i}. {status} - Tool: {tool_name}\n"
+                    f"   Args: {args}\n"
                     f"   Error: {error}"
                 )
         
@@ -347,22 +375,22 @@ class BaseAgent(ABC):
         completed_tools = {entry["tool"] for entry in tool_history}
         
         return f"""
-## ANÁLISIS PASO A PASO:
+                ## ANÁLISIS PASO A PASO:
 
-1. **REVISAR HISTORIAL:**
-- Tools ejecutadas: {', '.join(completed_tools) if completed_tools else 'ninguna'}
-- Total de acciones: {len(tool_history)}
+                1. **REVISAR HISTORIAL:**
+                - Tools ejecutadas: {', '.join(completed_tools) if completed_tools else 'ninguna'}
+                - Total de acciones: {len(tool_history)}
 
-2. **EVALUAR PROGRESO:**
-- ¿He cumplido el objetivo de la tarea?
-- ¿Qué información tengo disponible?
-- ¿Qué me falta para completar?
+                2. **EVALUAR PROGRESO:**
+                - ¿He cumplido el objetivo de la tarea?
+                - ¿Qué información tengo disponible?
+                - ¿Qué me falta para completar?
 
-3. **DECIDIR SIGUIENTE ACCIÓN:**
-- Si tengo todo lo necesario → final_answer
-- Si falta información → use_tool (decidir cuál)
-- Si algo falló → evaluar si puedo continuar o debo abortar
-"""
+                3. **DECIDIR SIGUIENTE ACCIÓN:**
+                - Si tengo todo lo necesario → final_answer
+                - Si falta información → use_tool (decidir cuál)
+                - Si algo falló → evaluar si puedo continuar o debo abortar
+                """
 
     def _parse_llm_decision(self, llm_response: str) -> Dict[str, Any]:
         """Parsea respuesta JSON del LLM"""
@@ -413,12 +441,7 @@ class BaseAgent(ABC):
         }
     
     async def _execute_tool(self, tool_name: str, tool_args: Dict) -> ToolOutput:
-        """
-        Ejecuta tool con ToolContext.
-        
-        SIMPLIFICADO: Ya no necesita enriquecer argumentos,
-        la tool resuelve sus propias dependencias.
-        """
+        """Ejecuta tool con manejo de errores"""
         tool = self.tools.get(tool_name)
         
         if not tool:
@@ -428,35 +451,21 @@ class BaseAgent(ABC):
             )
             return ToolOutput(
                 success=False,
-                error=f"Tool '{tool_name}' no disponible"
+                data=None,
+                error=f"Tool '{tool_name}' no disponible. Tools disponibles: {available}"
             )
         
         self.logger.log_info(f"Executing tool: {tool_name}", tool_args)
         
         try:
-            # Pass ToolContext to tool
-            if self._tool_context is None:
-                raise ValueError("ToolContext not initialized")
-            
-            result = await tool.execute(self._tool_context, **tool_args)
-            
-            # Publish result to context
-            self._tool_context.set_result(tool_name, result)
-            
+            result = await tool.execute(**tool_args)
             status = "✓ success" if result.success else "✗ failed"
             self.logger.log_info(f"Tool {tool_name} {status}")
-            
             return result
-            
         except Exception as e:
             self.logger.log_error(e, f"Tool {tool_name} execution failed")
-            error_result = ToolOutput(
+            return ToolOutput(
                 success=False,
+                data=None,
                 error=f"Error ejecutando tool: {str(e)}"
             )
-            
-            # Publish error result too
-            if self._tool_context is not None:
-                self._tool_context.set_result(tool_name, error_result)
-            
-            return error_result
