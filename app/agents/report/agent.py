@@ -1,36 +1,48 @@
 from typing import Dict, Any, List
 from datetime import datetime
 import re
-
+import os
 from app.agents.core import BaseAgent, AgentMessage
+from app.tools.implementations.sql_tools import SqlDataExtractionTool
 from app.tools.core import ToolRegistry
+from app.mcp.mcp_proxy import MCPProxyTool
 from .config import REPORT_AGENT_INSTRUCTIONS, RESPONSE_FORMAT_INSTRUCTIONS
 
 class ReportAgent(BaseAgent):
-    """
-    Agente especializado en generación de reportes.
-    Usa razonamiento adaptativo LLM (NO secuencia hardcodeada).
-    """
-    
     def __init__(self):
-        tools = [
-            ToolRegistry.get("sql_data_extraction"),
-            ToolRegistry.get("evidence_retrieval"),
-            ToolRegistry.get("business_rules"),
-            ToolRegistry.get("summary_generation"),
-            ToolRegistry.get("recommendations_generation"),
-            ToolRegistry.get("chart_generation")
-        ]
-        
-        tools = [t for t in tools if t is not None]
-        
+        use_mcp = os.getenv("USE_MCP", "false").lower() == "true"
+        if use_mcp:
+            # Crear proxies utilizando las definiciones originales
+            proxies = [
+                MCPProxyTool(
+                    name="sql_data_extraction",
+                    description="Extrae datos SQL del consultor", 
+                    input_schema=SqlDataExtractionTool.Input
+                ),
+                MCPProxyTool(
+                    name="evidence_retrieval",
+                    description="Recupera evidencia de defectos", 
+                    input_schema=EvidenceRetrievalTool.Input
+                ),
+                # repetir para business_rules, summary_generation, recommendations_generation, chart_generation
+            ]
+            tools = proxies
+        else:
+            tools = [
+                ToolRegistry.get("sql_data_extraction"),
+                ToolRegistry.get("evidence_retrieval"),
+                ToolRegistry.get("business_rules"),
+                ToolRegistry.get("summary_generation"),
+                ToolRegistry.get("recommendations_generation"),
+                ToolRegistry.get("chart_generation"),
+            ]
+            tools = [t for t in tools if t is not None]
         super().__init__(
             name="ReportAgent",
             tools=tools,
             max_iterations=15,
             response_format_instructions=RESPONSE_FORMAT_INSTRUCTIONS
         )
-        
         self.agent_instructions = REPORT_AGENT_INSTRUCTIONS
     
     async def process_task(self, task: str, context: Dict[str, Any]) -> AgentMessage:

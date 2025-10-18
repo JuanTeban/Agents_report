@@ -31,3 +31,4 @@ REPORT_MAX_DEFECTS = int(os.getenv("REPORT_MAX_DEFECTS", "10"))
 REPORTS_DIR = PROJECT_ROOT / "data_store" / "reports"
 REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 #--------------------------------------------------
+MCP_SERVER_URL: str = os.getenv("MCP_SERVER_URL", "http://localhost:8000/mcp")
