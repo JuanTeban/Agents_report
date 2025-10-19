@@ -1,20 +1,40 @@
+"""Clase base para agentes con soporte para tools remotas vía FastMCP."""
+
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
 import logging
 
 from app.utils.logger import get_flow_logger
-from app.tools.core import BaseTool, ToolOutput
-from .agent_message import AgentMessage
-
 from app.config.settings_agents import BASE_AGENT_INSTRUCTIONS
+from .agent_message import AgentMessage
+from .mcp_client import MCPClient
+
+
+class ToolOutput:
+    """Wrapper para outputs de tools (compatibilidad con código existente)."""
+    
+    def __init__(self, success: bool, data: Any = None, error: Optional[str] = None, metadata: Optional[Dict] = None):
+        self.success = success
+        self.data = data
+        self.error = error
+        self.metadata = metadata or {}
+    
+    def model_dump(self) -> Dict[str, Any]:
+        """Serializa a diccionario."""
+        return {
+            "success": self.success,
+            "data": self.data,
+            "error": self.error,
+            "metadata": self.metadata
+        }
+
 
 class BaseAgent(ABC):
-    """
-    Agente base con capacidad de razonamiento y uso de tools.
+    """Agente base con razonamiento y uso de tools remotas vía FastMCP.
     
     Implementa:
     - Loop de razonamiento (Thought → Action → Observation)
-    - Tool calling con validación
+    - Invocación de tools remotas mediante MCPClient
     - Logging detallado
     - Memoria de conversación
     """
@@ -22,13 +42,22 @@ class BaseAgent(ABC):
     def __init__(
         self,
         name: str,
-        tools: Optional[List[BaseTool]] = None,
+        mcp_client: Optional[MCPClient] = None,
         llm_provider: Optional[Any] = None,
         max_iterations: int = 10,
         response_format_instructions: Optional[str] = None
     ):
+        """Inicializa el agente.
+        
+        Args:
+            name: Nombre del agente
+            mcp_client: Cliente MCP para tools remotas. Si None, se crea uno nuevo.
+            llm_provider: Proveedor de LLM. Si None, se obtiene el por defecto.
+            max_iterations: Número máximo de iteraciones del loop de razonamiento
+            response_format_instructions: Instrucciones de formato para el LLM
+        """
         self.name = name
-        self.tools = {t.name: t for t in (tools or [])}
+        self.mcp_client = mcp_client
         self.llm = llm_provider or self._get_default_llm()
         self.max_iterations = max_iterations
         self.response_format_instructions = response_format_instructions or ""
@@ -41,13 +70,10 @@ class BaseAgent(ABC):
         )
         
         self.memory: List[AgentMessage] = []
-
         self._current_run_context: Dict[str, Any] = {}
+        self._tools_catalog: List[Dict[str, Any]] = []
         
-        self.logger.log_info(
-            f"Agent '{name}' initialized",
-            {"tools_count": len(self.tools), "tools": list(self.tools.keys())}
-        )
+        self.logger.log_info(f"Agent '{name}' initialized")
     
     def _get_default_llm(self):
         """Obtiene proveedor LLM configurado"""
@@ -56,8 +82,7 @@ class BaseAgent(ABC):
     
     @abstractmethod
     async def process_task(self, task: str, context: Dict[str, Any]) -> AgentMessage:
-        """
-        Método principal que cada agente debe implementar.
+        """Método principal que cada agente debe implementar.
         
         Args:
             task: Descripción de la tarea a realizar
@@ -68,9 +93,32 @@ class BaseAgent(ABC):
         """
         pass
     
+    async def _load_tools_catalog(self) -> None:
+        """Carga el catálogo de tools desde el servidor FastMCP."""
+        if not self.mcp_client:
+            self.logger.log_warning("No MCP client configured, tools catalog will be empty")
+            self._tools_catalog = []
+            return
+        
+        try:
+            self.logger.log_info("Loading tools catalog from FastMCP server...")
+            self._tools_catalog = await self.mcp_client.get_tools()
+            tool_names = [t.get("name") for t in self._tools_catalog]
+            self.logger.log_info(f"Tools catalog loaded: {len(self._tools_catalog)} tools")
+            self.logger.log_data("tools_catalog", {"tools": tool_names})
+        except Exception as e:
+            self.logger.log_error(e, "Failed to load tools catalog")
+            self._tools_catalog = []
+    
     async def run(self, task: str, context: Optional[Dict] = None) -> AgentMessage:
-        """
-        Ejecuta el agente con loop de razonamiento.
+        """Ejecuta el agente con loop de razonamiento.
+        
+        Args:
+            task: Tarea a realizar
+            context: Contexto opcional
+            
+        Returns:
+            AgentMessage con el resultado final
         """
         self.logger.start_flow({
             "agent": self.name,
@@ -82,6 +130,9 @@ class BaseAgent(ABC):
         iteration = 0
         
         self._current_run_context = context
+        
+        # Cargar catálogo de tools al inicio
+        await self._load_tools_catalog()
         
         try:
             async with self.logger.step(
@@ -171,8 +222,7 @@ class BaseAgent(ABC):
             return error_result
     
     async def _think(self, task: str, context: Dict) -> Dict[str, Any]:
-        """
-        Razonamiento adaptativo: LLM decide basándose en instrucciones detalladas.
+        """Razonamiento: LLM decide basándose en instrucciones y catálogo de tools.
         
         Returns:
             {
@@ -207,7 +257,7 @@ class BaseAgent(ABC):
             return self._fallback_decision(response.content, context)
 
     def _build_full_prompt(self, task: str, context: Dict) -> str:
-        """Construye prompt COMPLETO y DETALLADO para el LLM"""
+        """Construye prompt completo para el LLM."""
         
         agent_instructions = getattr(self, 'agent_instructions', '')
         
@@ -222,65 +272,66 @@ class BaseAgent(ABC):
         analysis_guide = self._get_analysis_guide(tool_history, task)
         
         return f"""
-                {BASE_AGENT_INSTRUCTIONS}
+{BASE_AGENT_INSTRUCTIONS}
 
-                {agent_instructions}
+{agent_instructions}
 
-                ## TOOLS DISPONIBLES:
-                {tools_catalog}
+## TOOLS DISPONIBLES (FastMCP):
+{tools_catalog}
 
-                ## TU TAREA ACTUAL:
-                {task}
+## TU TAREA ACTUAL:
+{task}
 
-                ## CONTEXTO:
-                - Consultor: {context.get('consultant_name', 'N/A')}
-                - Tipo: {context.get('report_type', 'N/A')}
+## CONTEXTO:
+- Consultor: {context.get('consultant_name', 'N/A')}
+- Tipo: {context.get('report_type', 'N/A')}
 
-                ## HISTORIAL DE TOOLS EJECUTADAS:
-                {history_text}
+## HISTORIAL DE TOOLS EJECUTADAS:
+{history_text}
 
-                ## ÚLTIMA OBSERVACIÓN:
-                {observation_text}
+## ÚLTIMA OBSERVACIÓN:
+{observation_text}
 
-                {analysis_guide}
-                   
-                ## FORMATO DE RESPUESTA:  
-                {self.response_format_instructions}
-                """
+{analysis_guide}
+   
+## FORMATO DE RESPUESTA:  
+{self.response_format_instructions}
+"""
 
     def _get_tools_catalog(self) -> str:
-        """Genera catálogo detallado de tools para el prompt"""
-        if not self.tools:
-            return "No hay tools disponibles"
+        """Genera catálogo de tools desde FastMCP."""
+        if not self._tools_catalog:
+            return "No hay tools disponibles (FastMCP no configurado o vacío)"
         
         catalog = []
-        for tool in self.tools.values():
-            schema = tool.to_llm_schema()
-            params = schema['parameters'].get('properties', {})
+        for tool in self._tools_catalog:
+            name = tool.get("name", "unknown")
+            description = tool.get("description", "Sin descripción")
+            input_schema = tool.get("input_schema", {})
+            properties = input_schema.get("properties", {})
+            required = input_schema.get("required", [])
             
             param_desc = []
-            for param_name, param_info in params.items():
-                param_type = param_info.get('type', 'any')
-                param_description = param_info.get('description', 'sin descripción')
-                required = param_name in schema['parameters'].get('required', [])
-                req_marker = " (requerido)" if required else " (opcional)"
-                param_desc.append(f"  - {param_name} ({param_type}){req_marker}: {param_description}")
+            for param_name, param_info in properties.items():
+                param_type = param_info.get("type", "any")
+                param_description = param_info.get("description", "sin descripción")
+                req_marker = " (requerido)" if param_name in required else " (opcional)"
+                param_desc.append(
+                    f"  - {param_name} ({param_type}){req_marker}: {param_description}"
+                )
             
             params_text = "\n".join(param_desc) if param_desc else "  - Sin parámetros"
             
             catalog.append(
-                f"**{schema['name']}**\n"
-                f"  Descripción: {schema['description']}\n"
+                f"**{name}**\n"
+                f"  Descripción: {description}\n"
                 f"  Parámetros:\n{params_text}"
             )
         
         return "\n\n".join(catalog)
 
     def _format_history_for_llm(self, tool_history: List[Dict]) -> str:
-        """
-        Formatea historial de forma INTELIGENTE para el LLM.
-        No truncar datos importantes como listas de resultados.
-        """
+        """Formatea historial de herramientas para el LLM."""
         if not tool_history:
             return "Sin historial (es la primera iteración)"
         
@@ -296,104 +347,74 @@ class BaseAgent(ABC):
                 data = result.get("data")
                 metadata = result.get("metadata", {})
                 
+                # Formato específico por tool
                 if tool_name == "sql_data_extraction":
-                    row_count = metadata.get("row_count", len(data) if isinstance(data, list) else 0)
+                    row_count = metadata.get("row_count", 0)
                     formatted.append(
                         f"{i}. {status} - Tool: {tool_name}\n"
                         f"   Args: {args}\n"
-                        f"   RESULTADOS: {row_count} filas extraídas\n"
-                        f"   SQL ejecutado: {metadata.get('sql_executed', 'N/A')[:100]}...\n"
-                        f"   IMPORTANTE: Hay {row_count} defectos en total"
+                        f"   RESULTADOS: {row_count} filas extraídas"
                     )
                 elif tool_name == "evidence_retrieval":
                     total_chunks = metadata.get("total_chunks", 0)
                     formatted.append(
                         f"{i}. {status} - Tool: {tool_name}\n"
-                        f"   Args: {args}\n"
-                        f"   RESULTADOS: {total_chunks} chunks de evidencia\n"
-                        f"   Stats: {metadata.get('stats_by_defect', {})}"
-                    )
-                elif tool_name == "business_rules":
-                    count = metadata.get("count", len(data) if isinstance(data, list) else 0)
-                    formatted.append(
-                        f"{i}. {status} - Tool: {tool_name}\n"
-                        f"   Args: {args}\n"
-                        f"   RESULTADOS: {count} reglas recuperadas"
-                    )
-                elif tool_name in ["summary_generation", "recommendations_generation"]:
-                    text_len = len(data) if isinstance(data, str) else 0
-                    formatted.append(
-                        f"{i}. {status} - Tool: {tool_name}\n"
-                        f"   Args: consultor={args.get('consultant_name', 'N/A')}\n"
-                        f"   RESULTADOS: Texto generado ({text_len} caracteres)\n"
-                        f"   Preview: {data[:150] if isinstance(data, str) else 'N/A'}..."
-                    )
-                elif tool_name == "chart_generation":
-                    chart_count = metadata.get("total_charts", 0)
-                    chart_names = metadata.get("chart_names", [])
-                    formatted.append(
-                        f"{i}. {status} - Tool: {tool_name}\n"
-                        f"   RESULTADOS: {chart_count} gráficos generados\n"
-                        f"   Nombres: {chart_names}"
+                        f"   RESULTADOS: {total_chunks} chunks de evidencia"
                     )
                 else:
-                    data_str = str(data)[:200] if data else "Sin datos"
+                    data_preview = str(data)[:200] if data else "Sin datos"
                     formatted.append(
                         f"{i}. {status} - Tool: {tool_name}\n"
-                        f"   Args: {args}\n"
-                        f"   Data: {data_str}...\n"
-                        f"   Metadata: {metadata}"
+                        f"   Data preview: {data_preview}..."
                     )
             else:
                 error = result.get("error", "Error desconocido")
                 formatted.append(
                     f"{i}. {status} - Tool: {tool_name}\n"
-                    f"   Args: {args}\n"
                     f"   Error: {error}"
                 )
         
         return "\n\n".join(formatted)
 
     def _format_last_observation(self, last_obs: Any) -> str:
-        """Formatea última observación para el LLM"""
+        """Formatea última observación."""
         if not last_obs:
             return "Sin observaciones previas (primera iteración)"
         
         if isinstance(last_obs, dict):
             success = last_obs.get("success")
             if success:
-                metadata = last_obs.get("metadata", {})
-                return f"✓ Última tool exitosa\nMetadata: {metadata}"
+                return "✓ Última tool exitosa"
             else:
                 error = last_obs.get("error", "Error desconocido")
-                return f"✗ Última tool falló\nError: {error}"
+                return f"✗ Última tool falló: {error}"
         
-        return "Observación disponible pero formato no reconocido"
+        return "Observación disponible"
 
     def _get_analysis_guide(self, tool_history: List[Dict], task: str) -> str:
-        """Genera guía de análisis para ayudar al LLM"""
+        """Genera guía de análisis."""
         completed_tools = {entry["tool"] for entry in tool_history}
         
         return f"""
-                ## ANÁLISIS PASO A PASO:
+## ANÁLISIS PASO A PASO:
 
-                1. **REVISAR HISTORIAL:**
-                - Tools ejecutadas: {', '.join(completed_tools) if completed_tools else 'ninguna'}
-                - Total de acciones: {len(tool_history)}
+1. **REVISAR HISTORIAL:**
+   - Tools ejecutadas: {', '.join(completed_tools) if completed_tools else 'ninguna'}
+   - Total de acciones: {len(tool_history)}
 
-                2. **EVALUAR PROGRESO:**
-                - ¿He cumplido el objetivo de la tarea?
-                - ¿Qué información tengo disponible?
-                - ¿Qué me falta para completar?
+2. **EVALUAR PROGRESO:**
+   - ¿He cumplido el objetivo de la tarea?
+   - ¿Qué información tengo disponible?
+   - ¿Qué me falta para completar?
 
-                3. **DECIDIR SIGUIENTE ACCIÓN:**
-                - Si tengo todo lo necesario → final_answer
-                - Si falta información → use_tool (decidir cuál)
-                - Si algo falló → evaluar si puedo continuar o debo abortar
-                """
+3. **DECIDIR SIGUIENTE ACCIÓN:**
+   - Si tengo todo lo necesario → final_answer
+   - Si falta información → use_tool (decidir cuál)
+   - Si algo falló → evaluar si puedo continuar
+"""
 
     def _parse_llm_decision(self, llm_response: str) -> Dict[str, Any]:
-        """Parsea respuesta JSON del LLM"""
+        """Parsea respuesta JSON del LLM."""
         import json
         import re
         
@@ -409,9 +430,14 @@ class BaseAgent(ABC):
         if decision["action"] == "use_tool":
             if "tool_name" not in decision:
                 raise ValueError("action=use_tool pero falta 'tool_name'")
-            if decision["tool_name"] not in self.tools:
-                available = ', '.join(self.tools.keys())
-                raise ValueError(f"Tool '{decision['tool_name']}' no existe. Disponibles: {available}")
+            # Verificar que la tool existe en el catálogo
+            tool_names = [t.get("name") for t in self._tools_catalog]
+            if decision["tool_name"] not in tool_names:
+                available = ', '.join(tool_names)
+                raise ValueError(
+                    f"Tool '{decision['tool_name']}' no existe en catálogo FastMCP. "
+                    f"Disponibles: {available}"
+                )
             if "tool_args" not in decision:
                 decision["tool_args"] = {}
         
@@ -422,10 +448,11 @@ class BaseAgent(ABC):
         return decision
 
     def _fallback_decision(self, llm_response: str, context: Dict) -> Dict[str, Any]:
-        """Decisión de emergencia si falla el parsing"""
-        self.logger.log_warning("Usando fallback decision por error de parsing")
+        """Decisión de emergencia si falla el parsing."""
+        self.logger.log_warning("Usando fallback decision")
         
-        for tool_name in self.tools.keys():
+        tool_names = [t.get("name") for t in self._tools_catalog]
+        for tool_name in tool_names:
             if tool_name in llm_response.lower():
                 return {
                     "reasoning": "Fallback: detecté mención de tool",
@@ -435,37 +462,68 @@ class BaseAgent(ABC):
                 }
         
         return {
-            "reasoning": "Fallback: no pude parsear decisión JSON",
+            "reasoning": "Fallback: no pude parsear decisión",
             "action": "final_answer",
             "answer": llm_response[:500]
         }
     
     async def _execute_tool(self, tool_name: str, tool_args: Dict) -> ToolOutput:
-        """Ejecuta tool con manejo de errores"""
-        tool = self.tools.get(tool_name)
+        """Ejecuta tool mediante MCPClient.
         
-        if not tool:
-            available = ', '.join(self.tools.keys())
+        Args:
+            tool_name: Nombre de la tool
+            tool_args: Argumentos para la tool
+            
+        Returns:
+            ToolOutput con el resultado
+        """
+        if not self.mcp_client:
+            self.logger.log_error(
+                Exception("No MCP client configured"),
+                "Cannot execute tool without MCP client"
+            )
+            return ToolOutput(
+                success=False,
+                data=None,
+                error="No MCP client configured"
+            )
+        
+        # Verificar que la tool existe
+        tool_names = [t.get("name") for t in self._tools_catalog]
+        if tool_name not in tool_names:
+            available = ', '.join(tool_names)
             self.logger.log_warning(
                 f"Tool '{tool_name}' no encontrada. Disponibles: {available}"
             )
             return ToolOutput(
                 success=False,
                 data=None,
-                error=f"Tool '{tool_name}' no disponible. Tools disponibles: {available}"
+                error=f"Tool '{tool_name}' no disponible. Disponibles: {available}"
             )
         
-        self.logger.log_info(f"Executing tool: {tool_name}", tool_args)
+        self.logger.log_info(f"Executing tool via FastMCP: {tool_name}", tool_args)
         
         try:
-            result = await tool.execute(**tool_args)
-            status = "✓ success" if result.success else "✗ failed"
+            # Invocar vía MCP
+            result = await self.mcp_client.invoke(tool_name, **tool_args)
+            
+            # Convertir a ToolOutput
+            output = ToolOutput(
+                success=result.get("success", False),
+                data=result.get("data"),
+                error=result.get("error"),
+                metadata=result.get("metadata", {})
+            )
+            
+            status = "✓ success" if output.success else "✗ failed"
             self.logger.log_info(f"Tool {tool_name} {status}")
-            return result
+            
+            return output
+            
         except Exception as e:
             self.logger.log_error(e, f"Tool {tool_name} execution failed")
             return ToolOutput(
                 success=False,
                 data=None,
-                error=f"Error ejecutando tool: {str(e)}"
+                error=f"Error ejecutando tool vía FastMCP: {str(e)}"
             )
